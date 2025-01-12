@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ping Pong Game</title>
+    <style>
+        /* Styles for the game */
+        .gameContainer {
+            width: 800px;
+            height: 400px;
+            position: relative;
+            border: 1px solid black;
+            margin: 20px auto;
+            background: #f0f0f0;
+        }
+
+        .paddle {
+            width: 20px;
+            height: 100px;
+            position: absolute;
+            background-color: black;
+        }
+
+        .ball {
+            width: 10px;
+            height: 10px;
+            position: absolute;
+            background-color: red;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="status">Connecting...</div>
+    <div id="playerId"></div>
+    <div id="score"></div>
+
+    <div class="gameContainer">
+        <div id="player1Paddle" class="paddle"></div>
+        <div id="player2Paddle" class="paddle" style="right: 0;"></div>
+        <div id="ball" class="ball"></div>
+    </div>
+
+    <script>
+        const GAME_WIDTH = 800;
+        const GAME_HEIGHT = 400;
+        const PADDLE_HEIGHT = 100;
+        const PADDLE_WIDTH = 20;
+        const BALL_RADIUS = 10;
+
+        let ws;
+        let gameState = null;
+        let playerId = null;
+
+        // Get player from URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        const player = urlParams.get("player");
+
+        // WebSocket connection
+        ws = new WebSocket(`ws://127.0.0.1:8000/ws?player=${player}`);
+
+        ws.onopen = () => {
+            document.getElementById('status').textContent = 'Connected';
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            gameState = data;
+            if (data.player1 && data.player2) {
+                document.getElementById('playerId').textContent = `You are Player: ${player}`;
+            }
+            updateGameUI();
+        };
+
+        ws.onclose = () => {
+            document.getElementById('status').textContent = 'Disconnected';
+        };
+
+        // Handle paddle movement based on key press
+        document.addEventListener('keydown', (e) => {
+            if (gameState && ws.readyState === WebSocket.OPEN) {
+                let direction = null;
+                if (e.key === 'ArrowUp') direction = 'up';
+                if (e.key === 'ArrowDown') direction = 'down';
+
+                if (direction) {
+                    ws.send(JSON.stringify({ direction }));
+                }
+            }
+        });
+
+        // Update the game UI (paddles, ball, score)
+        function updateGameUI() {
+            if (!gameState) return;
+
+            const player1Paddle = document.getElementById('player1Paddle');
+            const player2Paddle = document.getElementById('player2Paddle');
+            const ball = document.getElementById('ball');
+
+            player1Paddle.style.top = gameState.player1.paddle_y + 'px';
+            player2Paddle.style.top = gameState.player2.paddle_y + 'px';
+            ball.style.left = gameState.ball.x + 'px';
+            ball.style.top = gameState.ball.y + 'px';
+
+            document.getElementById('score').textContent = `Score - Player 1: ${gameState.player1.score} Player 2: ${gameState.player2.score}`;
+        }
+    </script>
+
+</body>
+
+</html>

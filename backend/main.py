@@ -115,6 +115,7 @@ async def get_game_page():
     html_content = open("../frontend/game.html", "r").read()  # Make sure the HTML file is present
     return HTMLResponse(content=html_content, status_code=200)
 
+# /ws?player=1
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, player: int):
     player_id = await game_manager.connect_player(websocket, player)
@@ -134,7 +135,7 @@ async def game_loop():
     while True:
         game_manager.move_ball()
         await game_manager.broadcast_state()
-        await asyncio.sleep(1 / 60)
+        await asyncio.sleep(1 / 120)
 
 @app.on_event("startup")
 async def startup():
