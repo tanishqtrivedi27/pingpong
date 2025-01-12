@@ -1,114 +1,96 @@
-import React, { useState, useEffect, useRef } from "react";
-import "./App.css";
+import React, { useState, useEffect, useCallback } from "react";
 
-const canvasWidth = 800;
-const canvasHeight = 400;
-const paddleWidth = 20;
-const paddleHeight = 100;
-const ballRadius = 10;
+const styles = {
+    gameContainer: {
+        width: "800px",
+        height: "400px",
+        position: "relative",
+        border: "1px solid black",
+        margin: "20px auto",
+        background: "#f0f0f0",
+    },
+    paddle: {
+        width: "20px",
+        height: "100px",
+        position: "absolute",
+        backgroundColor: "black",
+    },
+    ball: {
+        width: "10px",
+        height: "10px",
+        position: "absolute",
+        backgroundColor: "red",
+        borderRadius: "50%",
+        transform: "translate(-50%, -50%)",
+    },
+};
 
-const App = () => {
-    const canvasRef = useRef(null);
+const PingPong = () => {
     const [gameState, setGameState] = useState(null);
-    const [websocket, setWebSocket] = useState(null);
-    const [player, setPlayer] = useState(1); // Default player 1
+    const [playerId, setPlayerId] = useState(null);
+    const [status, setStatus] = useState("Connecting...");
+    const [ws, setWs] = useState(null);
 
     useEffect(() => {
-        const ws = new WebSocket("ws://localhost:8000/ws");
-
-        ws.onopen = () => {
-            console.log("Connected to server");
+        const socket = new WebSocket("ws://localhost:8000/ws");
+        socket.onopen = () => setStatus("Connected");
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            setGameState(data);
         };
-
-        ws.onmessage = (event) => {
-            const state = JSON.parse(event.data);
-            setGameState(state);
-        };
-
-        ws.onclose = () => {
-            console.log("Disconnected from server");
-        };
-
-        setWebSocket(ws);
-
-        return () => {
-            ws.close();
-        };
+        socket.onclose = () => setStatus("Disconnected");
+        setWs(socket);
+        return () => socket.close();
     }, []);
 
-    useEffect(() => {
-        const handleKeyDown = (event) => {
-            if (!websocket) return;
-
-            if (event.key === "ArrowUp") {
-                websocket.send(JSON.stringify({ player, direction: "up" }));
-            } else if (event.key === "ArrowDown") {
-                websocket.send(JSON.stringify({ player, direction: "down" }));
+    const handleKeyPress = useCallback(
+        (e) => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                ws.send(JSON.stringify({ direction: e.key === "ArrowUp" ? "up" : "down" }));
             }
-        };
-
-        window.addEventListener("keydown", handleKeyDown);
-
-        return () => {
-            window.removeEventListener("keydown", handleKeyDown);
-        };
-    }, [websocket, player]);
-
-    const drawGame = () => {
-        if (!gameState || !canvasRef.current) return;
-
-        const ctx = canvasRef.current.getContext("2d");
-        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-        // Draw paddles
-        ctx.fillStyle = "blue";
-        ctx.fillRect(0, gameState.player1.paddle_y, paddleWidth, paddleHeight);
-        ctx.fillStyle = "red";
-        ctx.fillRect(
-            canvasWidth - paddleWidth,
-            gameState.player2.paddle_y,
-            paddleWidth,
-            paddleHeight
-        );
-
-        // Draw ball
-        ctx.fillStyle = "black";
-        ctx.beginPath();
-        ctx.arc(gameState.ball.x, gameState.ball.y, ballRadius, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw obstacles
-        ctx.fillStyle = "green";
-        gameState.obstacles.forEach((obstacle) => {
-            ctx.fillRect(obstacle.x, obstacle.y, obstacle.size, obstacle.size);
-        });
-
-        // Draw scores
-        ctx.fillStyle = "black";
-        ctx.font = "20px Arial";
-        ctx.fillText(`Player 1: ${gameState.player1.score}`, 50, 30);
-        ctx.fillText(`Player 2: ${gameState.player2.score}`, canvasWidth - 150, 30);
-    };
+        },
+        [ws]
+    );
 
     useEffect(() => {
-        drawGame();
-    }, [gameState]);
+        window.addEventListener("keydown", handleKeyPress);
+        return () => window.removeEventListener("keydown", handleKeyPress);
+    }, [handleKeyPress]);
+
+    if (!gameState) return <div>Loading...</div>;
 
     return (
-        <div className="App">
-            <h1>Ping Pong Game</h1>
-            <canvas
-                ref={canvasRef}
-                width={canvasWidth}
-                height={canvasHeight}
-                style={{ border: "1px solid black" }}
-            ></canvas>
-            <div>
-                <button onClick={() => setPlayer(1)}>Play as Player 1</button>
-                <button onClick={() => setPlayer(2)}>Play as Player 2</button>
+        <div>
+            <div>Score - Player 1: {gameState.player1.score} Player 2: {gameState.player2.score}</div>
+            <div>Status: {status}</div>
+            {playerId && <div>You are Player: {playerId}</div>}
+
+            <div style={styles.gameContainer}>
+                <div
+                    style={{
+                        ...styles.paddle,
+                        left: 0,
+                        top: gameState.player1.paddle_y,
+                    }}
+                />
+                <div
+                    style={{
+                        ...styles.paddle,
+                        right: 0,
+                        top: gameState.player2.paddle_y,
+                    }}
+                />
+                <div
+                    style={{
+                        ...styles.ball,
+                        left: gameState.ball.x,
+                        top: gameState.ball.y,
+                    }}
+                />
             </div>
         </div>
     );
 };
 
-export default App;
+export default PingPong;

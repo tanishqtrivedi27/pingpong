@@ -1,108 +1,133 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-from contextlib import asynccontextmanager
-import random
 
-from fastapi import FastAPI
-from starlette.websockets import WebSocket, WebSocketDisconnect
+app = FastAPI()
 
-from state import PlayerState, GameState, BallState, game_height, game_width, paddle_height, paddle_width, ball_radius
-
-state = GameState(
-    player1=PlayerState(paddle_y=game_height // 2, score=0),
-    player2=PlayerState(paddle_y=game_height // 2, score=0),
-    ball=BallState(x=game_width // 2, y=game_height // 2, dx=5, dy=5),
-    obstacles=[
-        {"x": random.randint(100, game_width - 100), "y": random.randint(100, game_height - 100), "size": 50}
-        for _ in range(2)
-    ],
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Connected players
-connected_clients = []
+# Game constants
+GAME_WIDTH = 800
+GAME_HEIGHT = 400
+PADDLE_HEIGHT = 100
+PADDLE_WIDTH = 20
+BALL_RADIUS = 10
 
-# Game logic
-def handle_input(data):
-    player = data.get("player")
-    direction = data.get("direction")
+class GameManager:
+    def __init__(self):
+        self.player1 = None
+        self.player2 = None
+        self.state = {
+            "player1": {"paddle_y": GAME_HEIGHT // 2 - PADDLE_HEIGHT // 2, "score": 0},
+            "player2": {"paddle_y": GAME_HEIGHT // 2 - PADDLE_HEIGHT // 2, "score": 0},
+            "ball": {"x": GAME_WIDTH // 2, "y": GAME_HEIGHT // 2, "dx": 5, "dy": 5},
+        }
 
-    if player == 1:
-        state.player1.paddle_y += 10 if direction == "down" else -10
-        state.player1.paddle_y = max(0, min(game_height - paddle_height, state.player1.paddle_y))
-    elif player == 2:
-        state.player2.paddle_y += 10 if direction == "down" else -10
-        state.player2.paddle_y = max(0, min(game_height - paddle_height, state.player2.paddle_y))
+    async def connect_player(self, websocket: WebSocket):
+        await websocket.accept()
+        if not self.player1:
+            self.player1 = websocket
+            return 1
+        elif not self.player2:
+            self.player2 = websocket
+            return 2
+        else:
+            await websocket.close(code=1000)
+            return 0
 
-def move_ball():
-    state.ball.x += state.ball.dx
-    state.ball.y += state.ball.dy
+    def disconnect_player(self, websocket: WebSocket):
+        if websocket == self.player1:
+            self.player1 = None
+        elif websocket == self.player2:
+            self.player2 = None
 
-    # Ball collision with top/bottom walls
-    if state.ball.y - ball_radius <= 0 or state.ball.y + ball_radius >= game_height:
-        state.ball.dy *= -1
+    def update_paddle(self, player, direction):
+        movement = 15
+        if player == 1:
+            self.state["player1"]["paddle_y"] = max(
+                0,
+                min(
+                    GAME_HEIGHT - PADDLE_HEIGHT,
+                    self.state["player1"]["paddle_y"] + (movement if direction == "down" else -movement),
+                ),
+            )
+        elif player == 2:
+            self.state["player2"]["paddle_y"] = max(
+                0,
+                min(
+                    GAME_HEIGHT - PADDLE_HEIGHT,
+                    self.state["player2"]["paddle_y"] + (movement if direction == "down" else -movement),
+                ),
+            )
 
-    # Ball collision with paddles
-    if (
-        state.ball.x - ball_radius <= paddle_width
-        and state.player1.paddle_y <= state.ball.y <= state.player1.paddle_y + paddle_height
-    ) or (
-        state.ball.x + ball_radius >= game_width - paddle_width
-        and state.player2.paddle_y <= state.ball.y <= state.player2.paddle_y + paddle_height
-    ):
-        state.ball.dx *= -1
+    def move_ball(self):
+        ball = self.state["ball"]
+        ball["x"] += ball["dx"]
+        ball["y"] += ball["dy"]
 
-    # Ball out of bounds (score update)
-    if state.ball.x - ball_radius <= 0:
-        state.player2.score += 1
-        reset_ball()
-    elif state.ball.x + ball_radius >= game_width:
-        state.player1.score += 1
-        reset_ball()
+        # Wall collision
+        if ball["y"] - BALL_RADIUS <= 0 or ball["y"] + BALL_RADIUS >= GAME_HEIGHT:
+            ball["dy"] *= -1
 
-    # Ball collision with obstacles
-    for obstacle in state.obstacles:
+        # Paddle collision
         if (
-            obstacle["x"] <= state.ball.x <= obstacle["x"] + obstacle["size"]
-            and obstacle["y"] <= state.ball.y <= obstacle["y"] + obstacle["size"]
+            ball["x"] - BALL_RADIUS <= PADDLE_WIDTH
+            and self.state["player1"]["paddle_y"] <= ball["y"] <= self.state["player1"]["paddle_y"] + PADDLE_HEIGHT
         ):
-            state.ball.dx *= -1
-            state.ball.dy *= -1
+            ball["dx"] *= -1
+
+        if (
+            ball["x"] + BALL_RADIUS >= GAME_WIDTH - PADDLE_WIDTH
+            and self.state["player2"]["paddle_y"] <= ball["y"] <= self.state["player2"]["paddle_y"] + PADDLE_HEIGHT
+        ):
+            ball["dx"] *= -1
+
+        # Scoring
+        if ball["x"] - BALL_RADIUS <= 0:
+            self.state["player2"]["score"] += 1
+            self.reset_ball()
+        elif ball["x"] + BALL_RADIUS >= GAME_WIDTH:
+            self.state["player1"]["score"] += 1
+            self.reset_ball()
+
+    def reset_ball(self):
+        self.state["ball"] = {"x": GAME_WIDTH // 2, "y": GAME_HEIGHT // 2, "dx": 5, "dy": 5}
+
+    async def broadcast_state(self):
+        if self.player1:
+            await self.player1.send_json(self.state)
+        if self.player2:
+            await self.player2.send_json(self.state)
 
 
-def reset_ball():
-    state.ball.x = game_width // 2
-    state.ball.y = game_height // 2
-    state.ball.dx *= random.choice([-1, 1])
-    state.ball.dy *= random.choice([-1, 1])
-
-async def broadcast_state():
-    game_state = state.model_dump()
-    for client in connected_clients:
-        await client.send_json(game_state)
-
-# Background task to update game state
-async def game_loop():
-    while True:
-        move_ball()
-        await broadcast_state()
-        await asyncio.sleep(0.03)
-
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    # Load the ML model
-    asyncio.create_task(game_loop())
-    yield
-
-app = FastAPI(lifespan=lifespan)
+game_manager = GameManager()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    connected_clients.append(websocket)
+    player_id = await game_manager.connect_player(websocket)
+    if player_id == 0:
+        return
+
     try:
         while True:
             data = await websocket.receive_json()
-            handle_input(data)
-            await broadcast_state()
+            direction = data.get("direction")
+            if direction:
+                game_manager.update_paddle(player_id, direction)
     except WebSocketDisconnect:
-        connected_clients.remove(websocket)
+        game_manager.disconnect_player(websocket)
+
+
+async def game_loop():
+    while True:
+        game_manager.move_ball()
+        await game_manager.broadcast_state()
+        await asyncio.sleep(1 / 60)
+
+async def lifespan():
+    asyncio.create_task(game_loop())
