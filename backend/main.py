@@ -1,9 +1,11 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 
 app = FastAPI()
 
+# Allow CORS for frontend communication
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,17 +30,17 @@ class GameManager:
             "ball": {"x": GAME_WIDTH // 2, "y": GAME_HEIGHT // 2, "dx": 5, "dy": 5},
         }
 
-    async def connect_player(self, websocket: WebSocket):
+    async def connect_player(self, websocket: WebSocket, player_id: int):
         await websocket.accept()
-        if not self.player1:
+        if player_id == 1 and not self.player1:
             self.player1 = websocket
-            return 1
-        elif not self.player2:
+            return "player1"
+        elif player_id == 2 and not self.player2:
             self.player2 = websocket
-            return 2
+            return "player2"
         else:
             await websocket.close(code=1000)
-            return 0
+            return None
 
     def disconnect_player(self, websocket: WebSocket):
         if websocket == self.player1:
@@ -48,7 +50,7 @@ class GameManager:
 
     def update_paddle(self, player, direction):
         movement = 15
-        if player == 1:
+        if player == "player1":
             self.state["player1"]["paddle_y"] = max(
                 0,
                 min(
@@ -56,7 +58,7 @@ class GameManager:
                     self.state["player1"]["paddle_y"] + (movement if direction == "down" else -movement),
                 ),
             )
-        elif player == 2:
+        elif player == "player2":
             self.state["player2"]["paddle_y"] = max(
                 0,
                 min(
@@ -107,10 +109,16 @@ class GameManager:
 
 game_manager = GameManager()
 
+@app.get("/", response_class=HTMLResponse)
+async def get_game_page():
+    # Serve the game HTML page
+    html_content = open("../frontend/game.html", "r").read()  # Make sure the HTML file is present
+    return HTMLResponse(content=html_content, status_code=200)
+
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    player_id = await game_manager.connect_player(websocket)
-    if player_id == 0:
+async def websocket_endpoint(websocket: WebSocket, player: int):
+    player_id = await game_manager.connect_player(websocket, player)
+    if not player_id:
         return
 
     try:
@@ -122,12 +130,12 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         game_manager.disconnect_player(websocket)
 
-
 async def game_loop():
     while True:
         game_manager.move_ball()
         await game_manager.broadcast_state()
         await asyncio.sleep(1 / 60)
 
-async def lifespan():
+@app.on_event("startup")
+async def startup():
     asyncio.create_task(game_loop())
